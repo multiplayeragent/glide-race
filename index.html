@@ -1,0 +1,715 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Glide Race</title>
+<style>
+  html, body { margin: 0; height: 100%; overflow: hidden; overscroll-behavior: none; background: #f3e3c8; }
+  body { font: 15px/1.4 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; color: #fff; user-select: none; -webkit-user-select: none; }
+  canvas { display: block; touch-action: none; }
+  .hud { position: fixed; pointer-events: none; text-shadow: 0 2px 4px #0009; font-weight: 800; }
+  #pos { top: max(12px, env(safe-area-inset-top)); left: max(16px, env(safe-area-inset-left)); font-size: 40px; line-height: 1; }
+  #pos small { font-size: 18px; opacity: .85; }
+  #info { top: calc(max(12px, env(safe-area-inset-top)) + 46px); left: max(16px, env(safe-area-inset-left)); font-size: 15px; }
+  #time { top: max(12px, env(safe-area-inset-top)); right: max(16px, env(safe-area-inset-right)); text-align: right; font-size: 28px; line-height: 1; font-variant-numeric: tabular-nums; }
+  #time small { display: block; font-size: 14px; opacity: .85; margin-top: 4px; }
+  #net { bottom: max(10px, env(safe-area-inset-bottom)); left: 50%; transform: translateX(-50%); font-size: 12px; font-weight: 600; opacity: .85; white-space: nowrap; }
+  #hint { bottom: calc(max(10px, env(safe-area-inset-bottom)) + 26px); left: 0; right: 0; text-align: center; font-size: 16px; padding: 0 16px; }
+  body.touch #net { bottom: calc(max(16px, env(safe-area-inset-bottom)) + 84px); }
+  body.touch #hint { bottom: calc(max(16px, env(safe-area-inset-bottom)) + 104px); }
+  #count { inset: 0; display: grid; place-items: center; font-size: min(26vw, 180px); color: #ffd23f; -webkit-text-stroke: 4px #6a3c00; }
+  #msg { top: 26%; left: 0; right: 0; text-align: center; font-size: 30px; color: #ffd23f; transition: opacity .3s, transform .3s; opacity: 0; transform: scale(.85); padding: 0 16px; }
+  #msg.on { opacity: 1; transform: scale(1); }
+  #over { position: fixed; inset: 0; display: grid; place-items: center; background: #3a240e66; }
+  #over[hidden], .pad[hidden] { display: none; }
+  .card { box-sizing: border-box; width: min(380px, calc(100vw - 32px)); max-height: 86vh; overflow: auto; padding: 20px; border-radius: 16px; background: #3b2a4af2; border: 1px solid #ffffff2a; }
+  .card h2 { margin: 0 0 8px; font-size: 22px; }
+  .card h3 { margin: 14px 0 4px; font-size: 14px; color: #ffd23f; }
+  .card ol { margin: 0; padding-left: 24px; font-size: 14px; }
+  .card li span { float: right; font-variant-numeric: tabular-nums; }
+  .card li em { font-style: normal; opacity: .6; font-size: 12px; margin-left: 6px; }
+  .card li.me { color: #ffd23f; font-weight: 700; }
+  .card li.note { list-style: none; margin-left: -24px; opacity: .8; }
+  .card p { margin: 12px 0 0; font-size: 13px; opacity: .8; }
+  button.go { width: 100%; min-height: 48px; margin-top: 14px; border: 0; border-radius: 12px; background: #ffd23f; color: #3b2a4a; font: 800 17px system-ui, sans-serif; cursor: pointer; }
+  .pad { position: fixed; bottom: max(16px, env(safe-area-inset-bottom)); display: flex; gap: 12px; }
+  .pad button { width: 76px; height: 76px; border-radius: 50%; border: 2px solid #ffffff88; background: #00000033; color: #fff; font: 800 22px system-ui, sans-serif; touch-action: none; }
+  .pad button.on { background: #ffffff55; }
+  #padL { left: max(16px, env(safe-area-inset-left)); } #padR { right: max(16px, env(safe-area-inset-right)); }
+</style>
+<script src="https://cdn.multiplayeragent.com/sdk/mp.global.js"></script>
+<script type="importmap">{ "imports": { "three": "./libs/three.module.min.js" } }</script>
+</head>
+<body>
+<div class="hud" id="pos"></div>
+<div class="hud" id="info"></div>
+<div class="hud" id="time"></div>
+<div class="hud" id="hint"></div>
+<div class="hud" id="net">Connecting…</div>
+<div class="hud" id="count"></div>
+<div class="hud" id="msg"></div>
+<div class="pad" id="padL" hidden><button data-k="left">◀</button><button data-k="right">▶</button></div>
+<div class="pad" id="padR" hidden><button data-k="dive">▼</button><button data-k="climb">▲</button></div>
+<div id="over" hidden><div class="card">
+  <h2 id="otitle">Results</h2><ol id="results"></ol>
+  <h3>Fastest flights</h3><ol id="board"><li class="note">Loading…</li></ol>
+  <button class="go" id="again">Fly again</button>
+  <p id="next"></p>
+</div></div>
+<script type="module">
+/* ═══ GLIDE RACE · a Multiplayer Agent starter ════════════════════════════════════════
+ * Paper planes race down through a giant house: launch off the top of a bookshelf, glide
+ * room to room through the doorways, ride the warm air up from the floor vents, fly
+ * through the gold rings for speed, and out of the window at the end. You lose height
+ * all the time; hit a wall or the furniture and you start again from the last doorway.
+ * Versus, 2–8 players; bots fill empty seats.
+ *
+ * WHERE THINGS ARE (search for the "── " headers):
+ *   CONFIG ........ gliding physics, the doorways, rings, vents, bots, timers
+ *   CONNECTION .... MP_CONNECT, joining, the offline room, who is host
+ *   COURSE ........ the rooms, doorways, rings, vents and furniture (the same for everyone)
+ *   WORLD ......... floors, walls, the furniture, the garden outside, effects
+ *   PLANES ........ the paper plane model, and ONE physics function that flies any plane
+ *   RACE (HOST) ... the race phases (grid, race, done) and the bots. Only the host writes these.
+ *   MY PLANE ...... input, rings, crashes, doorways, the finish. Each player writes only its own.
+ *   HUD & RESULTS . place, time, rings, countdown, results, leaderboard
+ *   INPUT ......... keyboard and touch
+ *
+ * HOW THE MULTIPLAYER WORKS (a relay room: no server code):
+ *   - Each player flies its OWN plane with its own physics and writes its own entity: `k`
+ *     (one packed JSON field: race id, position, heading, pitch, roll, velocity, last
+ *     doorway, rings, finish time, crashed-until) about 15 times a second, `hb` (heartbeat)
+ *     once a second, and `n`/`c` (name, color) once. Planes pass through each other.
+ *   - The HOST is the lowest sessionId among live players (heartbeat seen in the last 3s),
+ *     worked out every frame. Only the host writes the shared fields `race` (id, version
+ *     `v`, phase, start and end times, results) and `bots`. A new host adopts both.
+ *   - The course is built from a fixed seed, so it is never sent.
+ *   - A new race starts only when the host bumps race.id; every client then goes back to
+ *     the top of the bookshelf. Someone who joins mid-race starts there with their own clock.
+ *   - Intent: "again" {} from the results card asks the host to start the next race now.
+ *   - ?attract plays offline with bots only (the preview video is recorded from it).
+ *   - Leaderboard "best-flight": each player's fastest flight (stored as 600000 - ms, so
+ *     higher is better), shown on the results card.
+ */
+import * as THREE from "three";
+
+// ── CONFIG ──────────────────────────────────────────────────────────────────────────
+const CONFIG = {
+  seats: 6,               // bots fill the race up to this many planes
+  hallW: 90, hallH: 130,  // the house's hallway: width and height (the floor is y = 0)
+  roomLen: 150,           // each room's length; a wall with a doorway closes each one
+  // Each wall's doorway: [x, y] of its middle. The last one is the open window: the finish.
+  doors: [[0, 82], [-18, 64], [15, 72], [-10, 50], [20, 56], [-15, 38], [0, 26]],
+  doorW: 30, doorH: 28, windowW: 40, windowH: 32,
+  startY: 96,             // launch height (the top of the bookshelf)
+  launch: 28,             // speed at GO
+  vmax: 58, vmin: 8,      // speed limits
+  stall: 14,              // below this the nose drops
+  gravity: 20,            // pulls you faster when you dive, slower when you climb
+  drag: 0.0018,           // air drag (times speed squared)
+  sink: 2.4,              // height you lose every second whatever you do
+  pitchRate: 1.5,         // nose up/down, radians/s
+  trim: -0.06,            // where the nose settles on its own
+  maxRoll: 0.85, turnRate: 1.6, // banking and turning
+  ringR: 7, ringBoost: 10, // ring size, and the speed one gives you
+  ventR: 10, ventLift: 34, // warm-air vents: width, and how hard they push you up
+  crashFor: 1400,         // ms you tumble before you're back at the last doorway
+  countdown: 5000,        // ms on the shelf before GO
+  afterFirst: 25000,      // ms the race stays open after the first finisher
+  resultsFor: 12000,      // ms the results show before the next race
+  botSkill: [0.72, 0.95], // bots' aim
+  board: "best-flight",
+};
+const BOT_NAMES = ["Origami", "Crease", "Fold", "Swoop", "Doodle", "Dart", "Paperclip"];
+const COLORS = ["#ff4d4d", "#3da5ff", "#ffd23f", "#52d273", "#c77dff", "#ff8c42", "#ff6fb5", "#3de0d0"];
+
+// ── CONNECTION ──────────────────────────────────────────────────────────────────────
+// The builder fills these in for this game. Downloaded from GitHub? Put your own pk_ key here.
+const MP_CONNECT = {
+  key: 'pk_REPLACE_ME',
+  room: 'glide-race',
+  endpoint: 'wss://live.multiplayeragent.com',
+  apiUrl: 'https://api.multiplayeragent.com',
+};
+const ATTRACT = new URLSearchParams(location.search).has("attract");
+
+/** Same shape as the SDK client, kept in this tab: offline play and ?attract. */
+function localRoom() {
+  const id = "local", state = { entities: { players: { [id]: {} } }, shared: {} }, subs = [];
+  let queued = false;
+  const emit = () => { if (!queued) { queued = true; queueMicrotask(() => { queued = false; subs.forEach((f) => f(state)); }); } };
+  const put = (o, k, v) => { if (typeof k === "object") Object.assign(o, k); else o[k] = v; emit(); };
+  return {
+    sessionId: id, state, offline: true,
+    me: { set: (k, v) => put(state.entities.players[id], k, v) },
+    setShared: (k, v) => put(state.shared, k, v),
+    onState: (f) => { subs.push(f); f(state); }, onJoin() {}, onLeave() {}, on() {}, send() {},
+    onDisconnect() {}, onReconnect() {}, leave: async () => {},
+  };
+}
+async function connect() {
+  if (ATTRACT || typeof MP === "undefined") return localRoom();
+  try {
+    const mp = await Promise.race([MP.join({ ...MP_CONNECT }), new Promise((_, no) => setTimeout(() => no(new Error("timed out")), 10000))]);
+    window.mp = mp; // the builder calls window.mp.leave() when the page closes
+    return mp;
+  } catch (e) {
+    console.warn("Playing offline:", e && e.message);
+    return localRoom();
+  }
+}
+const parse = (v, fb) => { if (typeof v !== "string") return fb; try { return JSON.parse(v); } catch { return fb; } };
+const memo = new Map();
+/** A shared JSON field, parsed once per change (read-only: never change what this returns). */
+function shared(key, fb) {
+  const raw = S.shared[key], m = memo.get(key);
+  if (m && m.raw === raw) return m.v;
+  const v = parse(raw, fb); memo.set(key, { raw, v }); return v;
+}
+let net = null, S = { entities: { players: {} }, shared: {} }, dropped = false;
+const seenHb = new Map();
+function livePlayers() {
+  const now = performance.now(), out = [];
+  for (const [id, p] of Object.entries(S.entities.players || {})) {
+    const s = seenHb.get(id);
+    if (!s || s.hb !== p.hb) seenHb.set(id, { hb: p.hb, at: now });
+    if (id === net.sessionId || now - seenHb.get(id).at < 3000) out.push(id);
+  }
+  return out.sort();
+}
+let wakeHold = 0, lastFrameAt = 0; // a tab whose frames stopped (frozen, or in the background) doesn't act as host, nor for 700ms after it wakes (see frame())
+const isHost = () => livePlayers()[0] === net.sessionId && performance.now() >= wakeHold && !(lastFrameAt && performance.now() - lastFrameAt > 1000);
+
+// ── COURSE ──────────────────────────────────────────────────────────────────────────
+const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
+const angle = (a) => Math.atan2(Math.sin(a), Math.cos(a));
+const lerp = (a, b, t) => a + (b - a) * t;
+function mulberry32(a) { return () => { a |= 0; a = (a + 0x6d2b79f5) | 0; let t = Math.imul(a ^ (a >>> 15), 1 | a); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; }; }
+const HW = CONFIG.hallW / 2, RL = CONFIG.roomLen, START = { x: 0, y: CONFIG.startY, z: 6 };
+// Walls: one at the end of each room, with a doorway (the last one: a big open window).
+const WALLS = CONFIG.doors.map(([x, y], k) => {
+  const last = k === CONFIG.doors.length - 1, w = last ? CONFIG.windowW : CONFIG.doorW, h = last ? CONFIG.windowH : CONFIG.doorH;
+  return { z: (k + 1) * RL, x, y, x0: x - w / 2, x1: x + w / 2, y0: y - h / 2, y1: y + h / 2, last };
+});
+const FINISH_Z = WALLS[WALLS.length - 1].z;
+const BOXES = []; // everything solid: { x0, y0, z0, x1, y1, z1 } (the walls around the doorways, the furniture)
+const box = (x0, y0, z0, x1, y1, z1, kind) => { const b = { x0, y0, z0, x1, y1, z1, kind }; BOXES.push(b); return b; };
+for (const w of WALLS) { // a wall is four boxes round its doorway
+  box(-HW, 0, w.z - 1, w.x0, CONFIG.hallH, w.z + 1, "wall"); box(w.x1, 0, w.z - 1, HW, CONFIG.hallH, w.z + 1, "wall");
+  box(w.x0, 0, w.z - 1, w.x1, w.y0, w.z + 1, "wall"); box(w.x0, w.y1, w.z - 1, w.x1, CONFIG.hallH, w.z + 1, "wall");
+}
+// The flying line: start → rings → doorway → rings → doorway ... Rings and vents sit on it.
+const RINGS = [], VENTS = [], TARGETS = [];
+{
+  const rnd = mulberry32(42);
+  let a = START;
+  WALLS.forEach((w, k) => {
+    const b = { x: w.x, y: w.y, z: w.z - 4 };
+    for (const f of [0.38, 0.72]) {
+      const r = { x: lerp(a.x, b.x, f) + (rnd() - 0.5) * 18, y: lerp(a.y, b.y, f) + 4 + rnd() * 4, z: lerp(a.z, b.z, f) };
+      RINGS.push(r); TARGETS.push(r);
+    }
+    TARGETS.push({ x: w.x, y: w.y, z: w.z + 2, door: k });
+    const vz = lerp(a.z, b.z, 0.55), vx = lerp(a.x, b.x, 0.55) + (rnd() - 0.5) * 10;
+    VENTS.push({ x: clamp(vx, -HW + 12, HW - 12), z: vz, top: Math.max(a.y, b.y) + 14 });
+    a = { x: w.x, y: w.y, z: w.z + 2 };
+  });
+}
+/** How far point p is from the flying line (to keep furniture off it). */
+function lineDist(x, y, z) {
+  let best = Infinity, a = START;
+  for (const b of TARGETS) { for (let t = 0; t <= 1; t += 0.1) best = Math.min(best, Math.hypot(x - lerp(a.x, b.x, t), y - lerp(a.y, b.y, t), z - lerp(a.z, b.z, t))); a = b; }
+  return best;
+}
+function boxClear(x0, y0, z0, x1, y1, z1) { // is a box at least 12 units from the flying line everywhere?
+  for (let u = 0; u <= 1; u += 1 / 3) for (let v = 0; v <= 1; v += 1 / 3) for (let w = 0; w <= 1; w += 1 / 3) if (lineDist(lerp(x0, x1, u), lerp(y0, y1, v), lerp(z0, z1, w)) < 12) return false;
+  return true;
+}
+// Furniture: giant tables, chairs, sofas, lamps and bookcases, each room its own mix.
+const FURNITURE = [];
+{
+  const rnd = mulberry32(7);
+  for (let k = 0; k < WALLS.length; k++) {
+    const z0 = k * RL + 20, z1 = (k + 1) * RL - 14;
+    for (let tries = 0, placed = 0; tries < 40 && placed < 4; tries++) {
+      const kind = ["table", "chair", "sofa", "lamp", "shelf"][Math.floor(rnd() * 5)], z = lerp(z0, z1, rnd());
+      let parts;
+      if (kind === "table") { const x = (rnd() - 0.5) * 40; parts = [[x - 20, 26, z - 12, x + 20, 29, z + 12], ...[[-18, -10], [18, -10], [-18, 10], [18, 10]].map(([dx, dz]) => [x + dx - 1.2, 0, z + dz - 1.2, x + dx + 1.2, 26, z + dz + 1.2])]; }
+      else if (kind === "chair") { const x = (rnd() - 0.5) * 60; parts = [[x - 8, 15, z - 8, x + 8, 17, z + 8], [x - 8, 17, z + 6, x + 8, 40, z + 8], ...[[-7, -7], [7, -7], [-7, 7], [7, 7]].map(([dx, dz]) => [x + dx - 0.8, 0, z + dz - 0.8, x + dx + 0.8, 15, z + dz + 0.8])]; }
+      else if (kind === "sofa") { const side = rnd() < 0.5 ? -1 : 1, x = side * (HW - 10); parts = [[x - 9, 0, z - 22, x + 9, 14, z + 22], [x + side * 5, 14, z - 22, x + side * 9, 30, z + 22]]; }
+      else if (kind === "lamp") { const x = (rnd() - 0.5) * 70; parts = [[x - 1, 0, z - 1, x + 1, 62, z + 1], [x - 6, 56, z - 6, x + 6, 66, z + 6]]; }
+      else { const side = rnd() < 0.5 ? -1 : 1, x = side * (HW - 7); parts = [[x - 7, 0, z - 20, x + 7, 70 + rnd() * 30, z + 20]]; }
+      if (!parts.every((p) => boxClear(...p))) continue;
+      FURNITURE.push({ kind, parts: parts.map((p) => box(...p, kind)) }); placed++;
+    }
+  }
+}
+/** Is (x, y, z) inside something solid, or outside the house's walls? */
+function solidAt(x, y, z) {
+  if (y < 0.6) return true;
+  if (z < FINISH_Z - 1 && (Math.abs(x) > HW - 0.6 || y > CONFIG.hallH - 0.6 || z < -10)) return true;
+  for (const b of BOXES) if (x > b.x0 - 0.6 && x < b.x1 + 0.6 && y > b.y0 - 0.6 && y < b.y1 + 0.6 && z > b.z0 - 0.6 && z < b.z1 + 0.6) return true;
+  return false;
+}
+/** Where you start again after a crash: just past the last doorway you flew through. */
+function respawnAt(cp) { const w = WALLS[cp]; return w ? { x: w.x, y: w.y, z: w.z + 5 } : START; }
+
+// ── WORLD ───────────────────────────────────────────────────────────────────────────
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setPixelRatio(Math.min(2, devicePixelRatio || 1));
+document.body.prepend(renderer.domElement);
+const scene = new THREE.Scene();
+scene.background = new THREE.Color("#8fd3ff"); // the sky, seen through the window at the end
+scene.fog = new THREE.Fog("#f3e3c8", 160, 420);
+const camera = new THREE.PerspectiveCamera(70, 1, 0.3, 1600);
+function fit() { renderer.setSize(innerWidth, innerHeight); camera.aspect = innerWidth / innerHeight; camera.updateProjectionMatrix(); }
+addEventListener("resize", fit); addEventListener("orientationchange", fit); fit();
+scene.add(new THREE.HemisphereLight("#fff6e8", "#8a6a4a", 1.5));
+const sun = new THREE.DirectionalLight("#fff0d0", 1.3); sun.position.set(-60, 160, 80); scene.add(sun);
+function canvasTex(w, h, paint, rx = 1, ry = 1) {
+  const c = document.createElement("canvas"); c.width = w; c.height = h; paint(c.getContext("2d"), w, h);
+  const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace; t.anisotropy = 4;
+  t.wrapS = t.wrapT = THREE.RepeatWrapping; t.repeat.set(rx, ry);
+  return t;
+}
+const LEN = FINISH_Z;
+// Floor: wooden planks. Walls: striped wallpaper over a skirting board. Ceiling: plain, with lights.
+const planks = canvasTex(256, 256, (c, w, h) => {
+  for (let i = 0; i < 8; i++) { c.fillStyle = ["#b07a48", "#a8703f", "#b8834f", "#9f6a3a"][i % 4]; c.fillRect(0, i * 32, w, 32); c.fillStyle = "#0002"; c.fillRect(0, i * 32, w, 2); c.fillRect(((i * 97) % 200) + 20, i * 32, 2, 32); }
+  for (let i = 0; i < 300; i++) { c.fillStyle = "#0000000d"; c.fillRect(Math.random() * w, Math.random() * h, 20 + Math.random() * 40, 1); }
+}, CONFIG.hallW / 30, LEN / 30);
+const floor = new THREE.Mesh(new THREE.PlaneGeometry(CONFIG.hallW, LEN + 20).rotateX(-Math.PI / 2), new THREE.MeshStandardMaterial({ map: planks, roughness: 0.8 }));
+floor.position.set(0, 0, LEN / 2 - 10); scene.add(floor);
+const paper = canvasTex(128, 128, (c, w, h) => {
+  c.fillStyle = "#f2d6a2"; c.fillRect(0, 0, w, h); c.fillStyle = "#e7c084"; for (let x = 0; x < w; x += 32) c.fillRect(x, 0, 12, h);
+  c.fillStyle = "#c98b5a"; for (let y = 16; y < h; y += 32) for (let x = 6; x < w; x += 32) { c.beginPath(); c.arc(x + 16, y, 3, 0, 7); c.fill(); }
+}, LEN / 40, CONFIG.hallH / 40);
+for (const s of [-1, 1]) {
+  const wall = new THREE.Mesh(new THREE.PlaneGeometry(LEN + 20, CONFIG.hallH), new THREE.MeshStandardMaterial({ map: paper, roughness: 1 }));
+  wall.rotation.y = -s * Math.PI / 2; wall.position.set(s * HW, CONFIG.hallH / 2, LEN / 2 - 10); scene.add(wall);
+  const skirt = new THREE.Mesh(new THREE.BoxGeometry(1, 6, LEN + 20), new THREE.MeshStandardMaterial({ color: "#fff8ee" })); skirt.position.set(s * (HW - 0.5), 3, LEN / 2 - 10); scene.add(skirt);
+}
+const ceiling = new THREE.Mesh(new THREE.PlaneGeometry(CONFIG.hallW, LEN + 20).rotateX(Math.PI / 2), new THREE.MeshStandardMaterial({ color: "#fbf4ea", emissive: "#cfc3b0" }));
+ceiling.position.set(0, CONFIG.hallH, LEN / 2 - 10); scene.add(ceiling);
+const back = new THREE.Mesh(new THREE.PlaneGeometry(CONFIG.hallW, CONFIG.hallH), new THREE.MeshStandardMaterial({ map: paper })); back.position.set(0, CONFIG.hallH / 2, -10); scene.add(back);
+const glowTex = canvasTex(64, 64, (c) => { const g = c.createRadialGradient(32, 32, 0, 32, 32, 32); g.addColorStop(0, "#fff"); g.addColorStop(0.4, "#fff8"); g.addColorStop(1, "#fff0"); c.fillStyle = g; c.fillRect(0, 0, 64, 64); });
+for (let z = RL / 2; z < LEN; z += RL) { const lamp = new THREE.Sprite(new THREE.SpriteMaterial({ map: glowTex, color: "#fff2c0", depthWrite: false })); lamp.scale.set(30, 30, 1); lamp.position.set(0, CONFIG.hallH - 4, z); scene.add(lamp); }
+// The walls between rooms, with painted door frames round each doorway.
+const dividerPaper = paper.clone(); dividerPaper.repeat.set(CONFIG.hallW / 40, CONFIG.hallH / 40); dividerPaper.needsUpdate = true;
+const wallMat = new THREE.MeshStandardMaterial({ map: dividerPaper, roughness: 1 }), frameMat = new THREE.MeshStandardMaterial({ color: "#fdfaf3" });
+const wood = new THREE.MeshStandardMaterial({ color: "#8a5530", roughness: 0.7 }), fabric = new THREE.MeshStandardMaterial({ color: "#5a7ab0", roughness: 1 });
+const shade = new THREE.MeshStandardMaterial({ color: "#fff1c8", emissive: "#ffd98a", emissiveIntensity: 0.5 }), metal = new THREE.MeshStandardMaterial({ color: "#c8b080", metalness: 0.6, roughness: 0.4 });
+const bookCols = ["#c0392b", "#2e86de", "#27ae60", "#f39c12", "#8e44ad", "#16a085"];
+function boxMesh(b, mat) { const m = new THREE.Mesh(new THREE.BoxGeometry(b.x1 - b.x0, b.y1 - b.y0, b.z1 - b.z0), mat); m.position.set((b.x0 + b.x1) / 2, (b.y0 + b.y1) / 2, (b.z0 + b.z1) / 2); scene.add(m); return m; }
+for (const b of BOXES) if (b.kind === "wall") boxMesh(b, wallMat);
+const doorFrames = WALLS.map((w) => {
+  const g = new THREE.Group(), t = 1.6, ww = w.x1 - w.x0, hh = w.y1 - w.y0;
+  for (const [x, y, sx, sy] of [[w.x0 - t / 2, w.y, t, hh + t * 2], [w.x1 + t / 2, w.y, t, hh + t * 2], [w.x, w.y0 - t / 2, ww, t], [w.x, w.y1 + t / 2, ww, t]]) {
+    const m = new THREE.Mesh(new THREE.BoxGeometry(sx, sy, 2.6), frameMat.clone()); m.position.set(x, y, w.z); g.add(m);
+  }
+  scene.add(g); return g;
+});
+for (const f of FURNITURE) for (const b of f.parts) {
+  if (f.kind === "shelf") { // a bookcase full of books
+    boxMesh(b, wood);
+    const rnd = mulberry32(Math.floor(b.z0)), face = b.x0 < 0 ? b.x1 + 0.3 : b.x0 - 0.3;
+    for (let y = 4; y < b.y1 - 8; y += 16) for (let z = b.z0 + 2; z < b.z1 - 3; z += 3 + rnd() * 2) { const h = 8 + rnd() * 6, m = new THREE.Mesh(new THREE.BoxGeometry(1, h, 2.4), new THREE.MeshStandardMaterial({ color: bookCols[Math.floor(rnd() * 6)] })); m.position.set(face, y + h / 2, z); scene.add(m); }
+  } else boxMesh(b, f.kind === "sofa" ? fabric : f.kind === "lamp" ? (b.y1 - b.y0 < 15 ? shade : metal) : wood);
+}
+// The bookshelf we launch from, and the garden beyond the window.
+boxMesh({ x0: -HW + 1, y0: 0, z0: -10, x1: HW - 1, y1: CONFIG.startY - 2, z1: 2 }, wood);
+const lawn = new THREE.Mesh(new THREE.PlaneGeometry(900, 700).rotateX(-Math.PI / 2), new THREE.MeshStandardMaterial({ color: "#6cbf4a" })); lawn.position.set(0, -0.05, FINISH_Z + 340); scene.add(lawn);
+const skyBox = new THREE.Mesh(new THREE.PlaneGeometry(1600, 600), new THREE.MeshBasicMaterial({ color: "#8fd3ff", fog: false })); skyBox.position.set(0, 200, FINISH_Z + 650); scene.add(skyBox);
+const trees = new THREE.InstancedMesh(new THREE.SphereGeometry(14, 10, 8), new THREE.MeshStandardMaterial({ color: "#3d9a4a", flatShading: true }), 20);
+{ const rnd = mulberry32(9), m = new THREE.Matrix4(); for (let i = 0; i < 20; i++) { m.makeTranslation((rnd() - 0.5) * 600, 10, FINISH_Z + 120 + rnd() * 400); trees.setMatrixAt(i, m); } scene.add(trees); }
+const banner = new THREE.Mesh(new THREE.PlaneGeometry(CONFIG.windowW + 6, 6), new THREE.MeshBasicMaterial({ map: canvasTex(128, 16, (c) => { for (let x = 0; x < 32; x++) for (let y = 0; y < 4; y++) { c.fillStyle = (x + y) % 2 ? "#111" : "#fff"; c.fillRect(x * 4, y * 4, 4, 4); } }), side: THREE.DoubleSide }));
+{ const w = WALLS[WALLS.length - 1]; banner.position.set(w.x, w.y1 + 6, w.z - 1.2); scene.add(banner); }
+// Rings: gold hoops that spin. Vents: floor grilles with warm air shimmering up.
+const ringMat = new THREE.MeshStandardMaterial({ color: "#ffcf3f", emissive: "#ffb000", emissiveIntensity: 0.45, metalness: 0.3, roughness: 0.35 });
+const ringMeshes = RINGS.map((r) => { const m = new THREE.Mesh(new THREE.TorusGeometry(CONFIG.ringR, 0.7, 10, 32), ringMat.clone()); m.position.set(r.x, r.y, r.z); scene.add(m); return m; });
+const airTex = canvasTex(64, 128, (c, w, h) => { const g = c.createLinearGradient(0, 0, 0, h); g.addColorStop(0, "#fff0"); g.addColorStop(0.5, "#fff6"); g.addColorStop(1, "#fff0"); c.fillStyle = g; for (let x = 0; x < w; x += 16) c.fillRect(x + 4, 0, 5, h); }, 3, 2);
+const airMat = new THREE.MeshBasicMaterial({ map: airTex, color: "#ffb36b", transparent: true, opacity: 0.55, depthWrite: false, side: THREE.DoubleSide, blending: THREE.AdditiveBlending });
+for (const v of VENTS) {
+  const grille = new THREE.Mesh(new THREE.BoxGeometry(CONFIG.ventR * 1.6, 0.6, CONFIG.ventR * 1.6), new THREE.MeshStandardMaterial({ color: "#d8d8d8", metalness: 0.5, roughness: 0.5 })); grille.position.set(v.x, 0.3, v.z); scene.add(grille);
+  const col = new THREE.Mesh(new THREE.CylinderGeometry(CONFIG.ventR, CONFIG.ventR, v.top, 20, 1, true), airMat); col.position.set(v.x, v.top / 2, v.z); scene.add(col);
+}
+// Effects: paper scraps when you crash, sparkles at rings, trails.
+const PN = 600, pPos = new Float32Array(PN * 3), pCol = new Float32Array(PN * 4), parts = Array.from({ length: PN }, () => ({ life: 0, max: 1, x: 0, y: -99, z: 0, vx: 0, vy: 0, vz: 0, r: 1, g: 1, b: 1, fall: 1 }));
+const pGeo = new THREE.BufferGeometry(); pGeo.setAttribute("position", new THREE.BufferAttribute(pPos, 3)); pGeo.setAttribute("color", new THREE.BufferAttribute(pCol, 4));
+const fx = new THREE.Points(pGeo, new THREE.PointsMaterial({ size: 0.7, map: glowTex, vertexColors: true, transparent: true, depthWrite: false }));
+fx.frustumCulled = false; scene.add(fx);
+fx.material.onBeforeCompile = (sh) => { sh.vertexShader = sh.vertexShader.replace("#include <fog_vertex>", "#include <fog_vertex>\n  gl_PointSize = min(gl_PointSize, 30.0);"); }; // dots right by the camera stay small
+let nextPart = 0; const tmpC = new THREE.Color();
+function emit(x, y, z, color, n, spread, life, fall = 1) {
+  tmpC.set(color);
+  for (let k = 0; k < n; k++) { const q = parts[nextPart]; nextPart = (nextPart + 1) % PN; Object.assign(q, { life, max: life, x, y, z, vx: (Math.random() - 0.5) * spread, vy: (Math.random() - 0.5) * spread, vz: (Math.random() - 0.5) * spread, r: tmpC.r, g: tmpC.g, b: tmpC.b, fall }); }
+}
+function tickParts(dt) {
+  for (let i = 0; i < PN; i++) {
+    const q = parts[i];
+    if (q.life > 0) { q.life -= dt; q.vy -= 9 * q.fall * dt; q.x += q.vx * dt; q.y += q.vy * dt; q.z += q.vz * dt; q.vx *= 1 - 1.5 * dt; q.vz *= 1 - 1.5 * dt; }
+    pPos[i * 3] = q.x; pPos[i * 3 + 1] = q.life > 0 ? q.y : -99; pPos[i * 3 + 2] = q.z;
+    pCol[i * 4] = q.r; pCol[i * 4 + 1] = q.g; pCol[i * 4 + 2] = q.b; pCol[i * 4 + 3] = Math.max(0, q.life / q.max);
+  }
+  pGeo.attributes.position.needsUpdate = pGeo.attributes.color.needsUpdate = true;
+}
+// Sound: tiny WebAudio blips, started by the first key or touch.
+let actx = null;
+function beep(freq, dur, type = "sine", vol = 0.1) {
+  if (!actx) return;
+  const o = actx.createOscillator(), g = actx.createGain(); o.type = type; o.frequency.value = freq;
+  g.gain.setValueAtTime(vol, actx.currentTime); g.gain.exponentialRampToValueAtTime(0.001, actx.currentTime + dur);
+  o.connect(g).connect(actx.destination); o.start(); o.stop(actx.currentTime + dur);
+}
+
+// ── PLANES ──────────────────────────────────────────────────────────────────────────
+/** A folded paper plane: two wings and a keel, white paper with colored wing edges. */
+function planeGeo(color) {
+  const c = new THREE.Color(color), w = new THREE.Color("#ffffff"), pos = [], col = [];
+  const tri = (a, b, d, ca, cb, cd) => { pos.push(...a, ...b, ...d); col.push(...ca.toArray(), ...cb.toArray(), ...cd.toArray()); };
+  const nose = [0, 0, 2.2], tail = [0, 0, -1.6], lt = [1.9, 0.25, -1.6], rt = [-1.9, 0.25, -1.6], keel = [0, -0.55, -1.3];
+  tri(nose, tail, lt, w, w, c); tri(nose, rt, tail, w, c, w); tri(nose, keel, tail, w, w, w);
+  const g = new THREE.BufferGeometry(); g.setAttribute("position", new THREE.Float32BufferAttribute(pos, 3)); g.setAttribute("color", new THREE.Float32BufferAttribute(col, 3)); g.computeVertexNormals();
+  return g;
+}
+function nameTag(name) {
+  const tex = canvasTex(256, 64, (c) => { c.font = "bold 34px system-ui"; c.textAlign = "center"; c.lineWidth = 6; c.strokeStyle = "#000a"; c.strokeText(name, 128, 44); c.fillStyle = "#fff"; c.fillText(name, 128, 44); });
+  tex.repeat.set(1, 1); const tag = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, depthTest: false })); tag.scale.set(5, 1.25, 1); tag.position.y = 2.4; return tag;
+}
+function makePlane(color, name) {
+  const g = new THREE.Group(), body = new THREE.Mesh(planeGeo(color), new THREE.MeshStandardMaterial({ vertexColors: true, side: THREE.DoubleSide, roughness: 0.9, flatShading: true }));
+  body.scale.setScalar(1.2); g.add(body);
+  if (name) g.add(nameTag(name));
+  g.userData = { body }; scene.add(g); return g;
+}
+/** Draw a plane at its spot, pointing along yaw/pitch, banked by roll; crashed planes tumble. */
+function placePlane(g, x, y, z, yaw, pitch, roll, crashedFor) {
+  g.position.set(x, y, z); g.rotation.set(-pitch, yaw, -roll, "YXZ");
+  const b = g.userData.body;
+  if (crashedFor > 0) { b.rotation.set(crashedFor * 7, crashedFor * 3, crashedFor * 5); b.scale.set(1.2, 0.5, 0.8); } else { b.rotation.set(0, 0, 0); b.scale.setScalar(1.2); }
+}
+const dirOf = (yaw, pitch) => ({ x: Math.sin(yaw) * Math.cos(pitch), y: Math.sin(pitch), z: Math.cos(yaw) * Math.cos(pitch) });
+/** The one physics function, used for every plane: c = { x, y, z, yaw, pitch, roll, sp, lift },
+ *  ctl = { turn -1..1 (left +), climb -1..1 }. Returns "crash" if it hit something. */
+function stepPlane(c, ctl, dt) {
+  const n = Math.max(1, Math.ceil(dt / (1 / 120))), h = dt / n;
+  for (let k = 0; k < n; k++) {
+    c.roll += (ctl.turn * CONFIG.maxRoll - c.roll) * Math.min(1, h * 4);
+    c.yaw = angle(c.yaw + Math.sin(c.roll) * CONFIG.turnRate * h * clamp(c.sp / 25, 0.6, 1.3));
+    if (ctl.climb) c.pitch += ctl.climb * CONFIG.pitchRate * h; else c.pitch += (CONFIG.trim - c.pitch) * h * 1.2;
+    if (c.sp < CONFIG.stall) c.pitch -= (CONFIG.stall - c.sp) * 0.12 * h; // too slow: the nose drops
+    c.pitch = clamp(c.pitch, -1.0, 0.7);
+    c.sp = clamp(c.sp - CONFIG.gravity * Math.sin(c.pitch) * h - CONFIG.drag * c.sp * c.sp * h, CONFIG.vmin, CONFIG.vmax);
+    // warm air from a vent pushes you up
+    let inVent = false;
+    for (const v of VENTS) if (c.y < v.top && (c.x - v.x) ** 2 + (c.z - v.z) ** 2 < CONFIG.ventR ** 2) inVent = true;
+    c.lift = (c.lift || 0) * Math.exp(-1.2 * h) + (inVent ? CONFIG.ventLift * h : 0);
+    c.inVent = inVent;
+    const d = dirOf(c.yaw, c.pitch);
+    c.vx = d.x * c.sp; c.vy = d.y * c.sp - CONFIG.sink + c.lift; c.vz = d.z * c.sp;
+    c.x += c.vx * h; c.y += c.vy * h; c.z += c.vz * h;
+    if (solidAt(c.x, c.y, c.z)) return "crash";
+  }
+  return "";
+}
+
+// ── RACE (HOST) ─────────────────────────────────────────────────────────────────────
+const host = { bots: new Map(), wasHost: false, lastBots: 0, raceId: 0, last: null };
+/** The race as state has it, or the host's own newer write that hasn't come back yet. `v` only goes up. */
+function race() {
+  const r = shared("race", null);
+  return host.last && isHost() && (!r || host.last.v > r.v) ? host.last : r;
+}
+function writeRace(r) { r = { ...r, v: (race()?.v ?? 0) + 1 }; host.last = r; net.setShared("race", JSON.stringify(r)); return r; }
+const newRace = (id) => writeRace({ id, phase: "grid", startAt: Date.now() + CONFIG.countdown, endsAt: 0, results: [] });
+
+/** Everyone in this race, leader first: finishers by time, then by how far down the house. */
+function racers() {
+  const out = [], r = race(), live = new Set(livePlayers());
+  for (const [id, p] of Object.entries(S.entities.players || {})) {
+    if (!live.has(id)) continue;
+    if (id === net.sessionId) { if (!ATTRACT) out.push({ id, name: "You", z: me.z, ft: me.ft, rg: me.rg, mine: true }); continue; }
+    const k = parse(p.k, null);
+    if (k && r && k.r === r.id) out.push({ id, name: p.n || "Player", z: k.z, ft: k.ft, rg: k.rg || 0 });
+  }
+  for (const b of botList()) out.push({ id: b.i, name: b.n, z: b.z, ft: b.ft, rg: b.rg || 0, bot: true });
+  if (ATTRACT) out.push({ id: net.sessionId, name: myName, z: me.z, ft: me.ft, rg: me.rg, mine: true });
+  return out.sort((a, b) => (a.ft && b.ft ? a.ft - b.ft : a.ft ? -1 : b.ft ? 1 : b.z - a.z));
+}
+/** The bots as published: the host's live copy, or the last list it wrote. */
+function botList() {
+  if (isHost()) return [...host.bots.values()].map((b) => ({ i: b.id, n: b.name, c: b.color, x: b.x, y: b.y, z: b.z, yw: b.yaw, pt: b.pitch, rl: b.roll, vx: b.vx || 0, vy: b.vy || 0, vz: b.vz || 0, sp: b.sp, cp: b.cp, rg: b.rg, rb: b.rb, ri: b.ri, ft: b.ft, cr: b.cr, sk: b.skill }));
+  return shared("bots", []);
+}
+/** A plane on the shelf, slot n of `total`, ready to launch. */
+function onShelf(n, total) { return { x: (n - (total - 1) / 2) * 5, y: START.y, z: START.z, yaw: 0, pitch: 0, roll: 0, sp: 0, lift: 0, vx: 0, vy: 0, vz: 0, cp: -1, rg: 0, rb: 0, ri: 0, ft: 0, cr: 0, launched: false }; } // rb: a bit per ring flown through, so a ring counts once
+function spawnBots(humans) {
+  const want = Math.max(0, CONFIG.seats - humans.length);
+  const keep = [...host.bots.values()].slice(0, want);
+  host.bots.clear(); keep.forEach((b) => host.bots.set(b.id, b));
+  while (host.bots.size < want) {
+    const used = new Set([...host.bots.values()].map((b) => b.name)), name = BOT_NAMES.find((n) => !used.has(n)) || "Bot";
+    const taken = new Set([...Object.values(S.entities.players || {}).map((p) => p.c), myColor, ...[...host.bots.values()].map((b) => b.color)]);
+    const [lo, hi] = CONFIG.botSkill, id = "b" + Math.random().toString(36).slice(2, 6);
+    host.bots.set(id, { id, name, color: COLORS.find((c) => !taken.has(c)) || "#cccccc", skill: lo + Math.random() * (hi - lo) });
+  }
+  const total = Math.max(CONFIG.seats, humans.length) + (ATTRACT ? 1 : 0); let n = humans.length;
+  for (const b of host.bots.values()) Object.assign(b, onShelf(n++, total), { aimX: 0, aimY: 0, aimFor: -1 });
+}
+function adoptBots() {
+  host.bots.clear();
+  for (const b of shared("bots", [])) host.bots.set(b.i, { id: b.i, name: b.n, color: b.c, skill: b.sk || 0.85, x: b.x, y: b.y, z: b.z, yaw: b.yw, pitch: b.pt, roll: b.rl, sp: b.sp || CONFIG.launch, lift: 0, vx: b.vx, vy: b.vy, vz: b.vz, cp: b.cp ?? -1, rg: b.rg || 0, rb: b.rb || 0, ri: b.ri || 0, ft: b.ft || 0, cr: b.cr || 0, launched: b.sp > 0, aimX: 0, aimY: 0, aimFor: -1 });
+}
+
+function hostTick(dt, now) {
+  if (!host.wasHost) { host.wasHost = true; adoptBots(); } // adopt the bots exactly as state has them
+  let r = race();
+  const humans = livePlayers().filter((id) => !(ATTRACT && id === net.sessionId));
+  if (!r) r = newRace(1);
+  if (host.raceId !== r.id) { host.raceId = r.id; if (r.phase === "grid") spawnBots(humans); }
+  else if (r.phase === "grid" && host.bots.size !== Math.max(0, CONFIG.seats - humans.length)) spawnBots(humans); // someone joined or left before GO
+  const t = Date.now();
+  if (r.phase === "grid" && t >= r.startAt) r = writeRace({ ...r, phase: "race" });
+  if (r.phase === "race") {
+    const all = racers(), done = all.filter((x) => x.ft);
+    const humansDone = all.filter((x) => !x.bot && (!ATTRACT || !x.mine)).every((x) => x.ft);
+    if (done.length && !r.endsAt) r = writeRace({ ...r, endsAt: t + CONFIG.afterFirst });
+    if ((done.length && humansDone && humans.length) || (r.endsAt && t > r.endsAt) || t - r.startAt > 300000 || (ATTRACT && done.length >= 3)) {
+      r = writeRace({ ...r, phase: "done", endsAt: t + CONFIG.resultsFor, results: all.map((x) => ({ id: x.id, n: x.mine ? myName : x.name, ft: x.ft || 0, rg: x.rg || 0 })) });
+    }
+  }
+  if (r.phase === "done" && t > r.endsAt) r = newRace(r.id + 1);
+  for (const b of host.bots.values()) flyOne(b, r, t, dt, () => botFly(b), null);
+  if (now - host.lastBots > 100) {
+    host.lastBots = now;
+    const r2 = (v) => +v.toFixed(2);
+    net.setShared("bots", JSON.stringify(botList().map((b) => ({ ...b, x: r2(b.x), y: r2(b.y), z: r2(b.z), yw: r2(b.yw), pt: r2(b.pt), rl: r2(b.rl), vx: +b.vx.toFixed(1), vy: +b.vy.toFixed(1), vz: +b.vz.toFixed(1), sp: +b.sp.toFixed(1), sk: r2(b.sk) }))));
+  }
+}
+/** One plane's turn (a bot's, or mine): launch at GO, fly, rings, doorways, crash and respawn, finish.
+ *  `steer` gives the controls; `say` (mine only) shows toasts and plays sounds. */
+function flyOne(c, r, t, dt, steer, say) {
+  if (r.phase === "grid") return;
+  if (!c.launched) { c.launched = true; c.sp = CONFIG.launch; }
+  if (c.cr) { // tumbling down after a crash, then back at the last doorway
+    c.y = Math.max(1, c.y - 14 * dt);
+    if (t > c.cr) { Object.assign(c, respawnAt(c.cp), { yaw: 0, pitch: CONFIG.trim, roll: 0, sp: CONFIG.launch, lift: 0, cr: 0 }); c.ri = RINGS.findIndex((g) => g.z > c.z); if (c.ri < 0) c.ri = RINGS.length; }
+    return;
+  }
+  const racing = r.phase === "race" && !c.ft;
+  const ctl = racing ? steer() : { turn: 0, climb: 0.3 };
+  const pz = c.z, hit = stepPlane(c, ctl, dt);
+  if (c.ft) { if (hit) { c.y = Math.max(1.2, c.y); c.sp = Math.max(CONFIG.vmin, c.sp * 0.95); } return; } // finished: glide on over the garden
+  if (hit) { c.cr = t + CONFIG.crashFor; emit(c.x, c.y, c.z, "#ffffff", 30, 12, 1.2); if (say) say("crash"); return; }
+  // rings: did I just fly through the next one?
+  while (c.ri < RINGS.length && RINGS[c.ri].z <= c.z) {
+    const g = RINGS[c.ri];
+    if (pz < g.z && Math.hypot(c.x - g.x, c.y - g.y) < CONFIG.ringR) { if (!(c.rb & (1 << c.ri))) { c.rb |= 1 << c.ri; c.rg++; } c.sp = Math.min(CONFIG.vmax, c.sp + CONFIG.ringBoost); emit(g.x, g.y, g.z, "#ffd23f", 24, 16, 0.7, 0); if (say) say("ring", c.ri); }
+    c.ri++;
+  }
+  while (c.cp + 1 < WALLS.length && WALLS[c.cp + 1].z < c.z) { c.cp++; if (say && !WALLS[c.cp].last) say("door", c.cp); }
+  if (c.cp === WALLS.length - 1 && !c.ft) { c.ft = Math.max(1, t - (c.t0 || r.startAt)); if (say) say("finish"); }
+}
+/** A bot (or the ?attract autopilot) flies at the next ring or doorway, a little off-centre. */
+function botFly(b) {
+  const ti = TARGETS.findIndex((g) => g.z > b.z + 3), tg = TARGETS[ti < 0 ? TARGETS.length - 1 : ti];
+  if (b.aimFor !== ti) { b.aimFor = ti; const miss = (1 - (b.skill || 0.85)) * (tg.door !== undefined ? 7 : 12); b.aimX = (Math.random() - 0.5) * 2 * miss; b.aimY = (Math.random() - 0.5) * 2 * miss; }
+  const dx = tg.x + b.aimX - b.x, dy = tg.y + b.aimY - b.y, dz = Math.max(4, tg.z - b.z);
+  const yawErr = angle(Math.atan2(dx, dz) - b.yaw), wantPitch = clamp(Math.atan2(dy, Math.hypot(dx, dz)), -0.7, 0.4);
+  let climb = clamp((wantPitch - b.pitch) * 3, -1, 1);
+  if (b.sp < CONFIG.stall + 3) climb = Math.min(climb, -0.4);
+  return { turn: clamp(yawErr * 2.5, -1, 1), climb };
+}
+
+// ── MY PLANE ────────────────────────────────────────────────────────────────────────
+const myName = (() => { try { return localStorage.getItem("mpa-name") || ""; } catch { return ""; } })() ||
+  ["Ace", "Blaze", "Comet", "Flash", "Jet", "Spark"][Math.floor(Math.random() * 6)] + " " + (10 + Math.floor(Math.random() * 90));
+let myColor = COLORS[0]; // picked on join: the first color nobody in the room has
+/** Two people joined at once in one color (or a bot has mine): the one with the higher sessionId picks a free one. */
+function fixColor() {
+  const others = Object.entries(S.entities.players || {}).filter(([id]) => id !== net.sessionId), botColors = botList().map((b) => b.c);
+  if (!others.some(([id, p]) => p.c === myColor && id < net.sessionId) && !botColors.includes(myColor)) return;
+  const taken = new Set([...others.map(([, p]) => p.c), ...botColors]), free = COLORS.find((c) => !taken.has(c));
+  if (free) { myColor = free; net.me.set("c", free); if (me.g) { scene.remove(me.g); me.g = null; } }
+}
+const me = Object.assign(onShelf(0, 1), { g: null, raceId: -1, t0: 0, best: 0, lastSend: 0, submitted: -1, shake: 0, aimX: 0, aimY: 0, aimFor: -1, skill: 0.93 });
+const input = { left: false, right: false, climb: false, dive: false };
+
+function resetToShelf(r) {
+  me.raceId = r.id;
+  const live = livePlayers().filter((id) => !(ATTRACT && id === net.sessionId)), total = Math.max(CONFIG.seats, live.length) + (ATTRACT ? 1 : 0);
+  Object.assign(me, onShelf(ATTRACT ? total - 1 : Math.max(0, live.indexOf(net.sessionId)), total), { t0: r.phase === "grid" ? r.startAt : Date.now(), aimFor: -1 });
+  for (const m of ringMeshes) m.material.color.set("#ffcf3f");
+  $("over").hidden = true;
+}
+function say(what, i) {
+  if (what === "ring") { ringMeshes[i].material.color.set("#7dff6a"); beep(990, 0.1); setTimeout(() => beep(1320, 0.12), 80); toast("Ring! +speed", 600); }
+  else if (what === "door") { beep(660, 0.1); toast(`Room ${i + 2}`, 800); }
+  else if (what === "crash") { me.shake = 1; beep(120, 0.3, "sawtooth", 0.08); toast("Crumpled! Back to the last doorway…", 1300); }
+  else if (what === "finish") { if (!me.best || me.ft < me.best) me.best = me.ft; toast(`Out the window! ${ord(racers().findIndex((x) => x.mine) + 1)}`, 2500); beep(660, 0.15); setTimeout(() => beep(880, 0.15), 140); setTimeout(() => beep(1320, 0.35), 280); }
+}
+function myTick(dt, r, t, now) {
+  if (me.raceId !== r.id) resetToShelf(r);
+  flyOne(me, r, t, dt, () => (ATTRACT ? botFly(me) : { turn: (input.left ? 1 : 0) - (input.right ? 1 : 0), climb: (input.climb ? 1 : 0) - (input.dive ? 1 : 0) }), ATTRACT ? null : say);
+  if (now - me.lastSend > 66) {
+    me.lastSend = now;
+    const r2 = (v) => +v.toFixed(2);
+    net.me.set("k", JSON.stringify({ r: me.raceId, x: r2(me.x), y: r2(me.y), z: r2(me.z), yw: r2(me.yaw), pt: r2(me.pitch), rl: r2(me.roll), vx: +me.vx.toFixed(1), vy: +me.vy.toFixed(1), vz: +me.vz.toFixed(1), sp: +me.sp.toFixed(1), cp: me.cp, rg: me.rg, ft: me.ft, cr: me.cr }));
+  }
+}
+
+// ── HUD & RESULTS ───────────────────────────────────────────────────────────────────
+const $ = (id) => document.getElementById(id);
+const ord = (n) => n + (n % 10 === 1 && n % 100 !== 11 ? "st" : n % 10 === 2 && n % 100 !== 12 ? "nd" : n % 10 === 3 && n % 100 !== 13 ? "rd" : "th");
+const fmt = (ms) => `${Math.floor(ms / 60000)}:${String(Math.floor((ms % 60000) / 1000)).padStart(2, "0")}.${String(Math.floor((ms % 1000) / 10)).padStart(2, "0")}`;
+const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
+let toastTimer = 0;
+function toast(text, ms = 1500) { if (ATTRACT) return; const m = $("msg"); m.textContent = text; m.classList.add("on"); clearTimeout(toastTimer); toastTimer = setTimeout(() => m.classList.remove("on"), ms); }
+let board = null, boardFor = -1, lastCount = "", started = 0;
+function hud(r, now) {
+  const t = Date.now();
+  const count = r.phase === "grid" && r.startAt - t < 3000 ? String(Math.max(1, Math.ceil((r.startAt - t) / 1000))) : r.phase === "race" && t - r.startAt < 900 ? "GO!" : "";
+  if (count !== lastCount) { lastCount = count; if (count === "GO!") beep(880, 0.4, "square", 0.08); else if (count) beep(440, 0.15, "square", 0.08); }
+  $("count").textContent = count;
+  if (ATTRACT) { for (const id of ["pos", "info", "time", "net", "hint"]) $(id).textContent = ""; return; }
+  const order = racers(), at = order.findIndex((x) => x.mine) + 1;
+  $("pos").innerHTML = at ? `${ord(at)} <small>/ ${order.length}</small>` : "";
+  $("info").textContent = me.ft ? "Out the window!" : `Room ${Math.min(WALLS.length, me.cp + 2)}/${WALLS.length} · rings ${me.rg}/${RINGS.length}`;
+  $("time").innerHTML = `${fmt(me.ft || (r.phase === "race" ? Math.max(0, t - me.t0) : 0))}<small>${Math.round(me.sp * 3)} km/h</small>`;
+  $("hint").textContent = r.phase === "grid" && r.startAt - t >= 3000 ? "Next flight starting…" : me.ft && r.phase === "race" ? "Waiting for the others…" :
+    now - started < 15000 ? (touchUI ? "◀ ▶ turn · ▲ climb · ▼ dive · fly through the doorways, ride the warm air up" : "←/→ turn · ↑ climb · ↓ dive · fly through the doorways, ride the warm air up") : "";
+  const n = livePlayers().length;
+  $("net").textContent = net.offline ? "Offline: playing with bots" : dropped ? "Reconnecting…" : `Online · ${n} player${n === 1 ? "" : "s"}${isHost() ? " · you run the race" : ""}`;
+  $("over").hidden = r.phase !== "done";
+  if (r.phase === "done") {
+    const win = r.results[0];
+    $("otitle").textContent = win && win.ft ? (win.id === net.sessionId ? "You win!" : `${win.n} wins!`) : "Results";
+    $("results").innerHTML = r.results.map((x) => `<li class="${x.id === net.sessionId ? "me" : ""}">${esc(x.n)}<em>${x.rg} ring${x.rg === 1 ? "" : "s"}</em><span>${x.ft ? fmt(x.ft) : "DNF"}</span></li>`).join("");
+    $("next").textContent = `Next flight in ${Math.max(0, Math.ceil((r.endsAt - t) / 1000))}s`;
+    if (boardFor !== r.id) { boardFor = r.id; showBoard(r); }
+  }
+}
+function showBoard(r) {
+  const list = $("board");
+  if (!board) { list.innerHTML = "<li class=\"note\">Leaderboards need a connection.</li>"; return; }
+  const mine = r.results.find((x) => x.id === net.sessionId);
+  const submit = mine && mine.ft && me.submitted !== r.id ? board.submit(Math.max(0, 600000 - mine.ft)).catch(() => null) : Promise.resolve();
+  me.submitted = r.id;
+  submit.then(() => board.top(10)).then(({ entries }) => {
+    list.innerHTML = entries.length ? entries.map((e) => `<li>${esc(e.username || "Player")}<span>${fmt(600000 - e.score)}</span></li>`).join("") : "<li class=\"note\">No flights yet. Set the first.</li>";
+  }).catch(() => { list.innerHTML = "<li class=\"note\">Couldn't load the leaderboard.</li>"; });
+}
+function again() { const r = race(); if (r && r.phase === "done" && isHost()) newRace(r.id + 1); }
+$("again").onclick = () => { if (isHost()) again(); else net.send("again", {}); };
+
+// ── INPUT ───────────────────────────────────────────────────────────────────────────
+const touchUI = matchMedia("(pointer: coarse)").matches && !ATTRACT;
+$("padL").hidden = $("padR").hidden = !touchUI;
+document.body.classList.toggle("touch", touchUI);
+const wakeAudio = () => { if (!actx) { try { actx = new (window.AudioContext || window.webkitAudioContext)(); } catch {} } };
+const KEYS = { ArrowLeft: "left", a: "left", A: "left", ArrowRight: "right", d: "right", D: "right", ArrowUp: "climb", w: "climb", W: "climb", ArrowDown: "dive", s: "dive", S: "dive" };
+addEventListener("keydown", (e) => { wakeAudio(); const k = KEYS[e.key]; if (k) { e.preventDefault(); input[k] = true; } });
+addEventListener("keyup", (e) => { const k = KEYS[e.key]; if (k) input[k] = false; });
+for (const b of document.querySelectorAll(".pad button")) {
+  const k = b.dataset.k, on = (v) => { input[k] = v; b.classList.toggle("on", v); };
+  b.addEventListener("pointerdown", (e) => { e.preventDefault(); wakeAudio(); b.setPointerCapture(e.pointerId); on(true); });
+  for (const ev of ["pointerup", "pointercancel"]) b.addEventListener(ev, () => on(false));
+}
+renderer.domElement.addEventListener("pointerdown", wakeAudio);
+document.addEventListener("touchmove", (e) => e.preventDefault(), { passive: false });
+
+// ── MAIN LOOP ───────────────────────────────────────────────────────────────────────
+const views = new Map(); // id -> drawn plane for everyone but me
+function viewOf(id, color, name) {
+  let v = views.get(id);
+  if (v && v.color !== color) { scene.remove(v.g); views.delete(id); v = null; } // they changed color
+  if (!v) { v = { g: makePlane(color, ATTRACT ? "" : name), color, x: 0, y: 0, z: 0, yaw: 0, pitch: 0, roll: 0, raw: "", fresh: true, trailAt: 0 }; views.set(id, v); }
+  return v;
+}
+/** Ease a drawn plane toward where it said it was, plus how far it has flown since. */
+function follow(v, k, dt, now) {
+  const key = `${k.x},${k.y},${k.z}`;
+  if (v.raw !== key) Object.assign(v, { raw: key, sx: k.x, sy: k.y, sz: k.z, vx: k.vx || 0, vy: k.vy || 0, vz: k.vz || 0, at: now });
+  const age = Math.min(0.25, (now - v.at) / 1000), crashed = k.cr > 0, tx = v.sx + (crashed ? 0 : v.vx * age), ty = v.sy + (crashed ? 0 : v.vy * age), tz = v.sz + (crashed ? 0 : v.vz * age);
+  if (v.fresh || Math.hypot(tx - v.x, ty - v.y, tz - v.z) > 20) Object.assign(v, { x: tx, y: ty, z: tz, fresh: false });
+  const e = 1 - Math.pow(0.001, dt);
+  v.x += (tx - v.x) * e; v.y += (ty - v.y) * e; v.z += (tz - v.z) * e;
+  v.yaw = angle(v.yaw + angle(k.yw - v.yaw) * e); v.pitch += (k.pt - v.pitch) * e; v.roll += (k.rl - v.roll) * e;
+}
+/** A faint trail of the plane's color behind it. */
+function trail(p, color, now) {
+  if (p.cr || now < (p.trailAt || 0)) return;
+  const moved = p.tz === undefined || Math.abs(p.z - p.tz) > 0.5; p.tz = p.z; p.trailAt = now + 40;
+  if (!moved) return; // parked on the shelf: no trail
+  const d = dirOf(p.yaw, p.pitch); emit(p.x - d.x * 2.2, p.y - d.y * 2.2, p.z - d.z * 2.2, color, 1, 0.3, 0.9, 0);
+}
+let last = performance.now(), lastHb = 0, lastHud = 0, camYaw = 0;
+const camPos = new THREE.Vector3(), camLook = new THREE.Vector3(), shakeV = new THREE.Vector3();
+function frame(now) {
+  requestAnimationFrame(frame);
+  const realNow = performance.now(); // timed on the real clock: after a long freeze the rAF time can be from before the wake
+  if (lastFrameAt && realNow - lastFrameAt > 1000) { wakeHold = realNow + 700; host.wasHost = false; host.last = null; } lastFrameAt = realNow; // woke from a freeze or a background tab: another player may have run the race meanwhile, so let their state arrive, then adopt it like a new host
+  const dt = Math.max(0, Math.min(0.05, (now - last) / 1000)); last = now; // the first frame can be stamped before `last`
+  if (now - lastHb > 1000) { lastHb = now; net.me.set("hb", Date.now()); fixColor(); }
+  if (isHost()) hostTick(dt, now); else host.wasHost = false;
+  const r = race(), t = Date.now();
+  if (r) myTick(dt, r, t, now);
+  // everyone else's planes
+  const seen = new Set(), live = new Set(livePlayers());
+  for (const [id, p] of Object.entries(S.entities.players || {})) {
+    if (id === net.sessionId || !live.has(id)) continue;
+    const k = parse(p.k, null); if (!k || !r || k.r !== r.id) continue;
+    seen.add(id); const v = viewOf(id, p.c || "#ccc", p.n || "Player"); follow(v, k, dt, now); v.cr = k.cr;
+    placePlane(v.g, v.x, v.y, v.z, v.yaw, v.pitch, v.roll, k.cr ? (k.cr - t) / 1000 : 0); trail(v, p.c || "#ccc", now);
+  }
+  const hostBots = isHost();
+  for (const b of botList()) {
+    seen.add(b.i); const v = viewOf(b.i, b.c, b.n);
+    if (hostBots) { const hb = host.bots.get(b.i); Object.assign(v, { x: hb.x, y: hb.y, z: hb.z, yaw: hb.yaw, pitch: hb.pitch, roll: hb.roll, cr: hb.cr }); } else { follow(v, b, dt, now); v.cr = b.cr; }
+    placePlane(v.g, v.x, v.y, v.z, v.yaw, v.pitch, v.roll, b.cr ? (b.cr - t) / 1000 : 0); trail(v, b.c, now);
+  }
+  for (const [id, v] of views) if (!seen.has(id)) { scene.remove(v.g); views.delete(id); }
+  if (!me.g) me.g = makePlane(myColor, "");
+  placePlane(me.g, me.x, me.y, me.z, me.yaw, me.pitch, me.roll, me.cr ? (me.cr - t) / 1000 : 0); trail(me, myColor, now);
+  // the next doorway glows; rings spin
+  const nextDoor = me.cp + 1;
+  doorFrames.forEach((g, k) => g.children.forEach((m) => { m.material.emissive.set(k === nextDoor && !ATTRACT ? "#ffb000" : "#000000"); m.material.emissiveIntensity = 0.4 + Math.sin(now / 200) * 0.3; }));
+  ringMeshes.forEach((m, i) => { m.rotation.z += dt * (i % 2 ? 1 : -1); });
+  airTex.offset.y -= dt * 0.8;
+  tickParts(dt);
+  // chase camera: behind and a little above, swinging round smoothly
+  camYaw = angle(camYaw + angle(me.yaw - camYaw) * Math.min(1, dt * 3));
+  const back = camera.aspect < 1 ? 12 : 9.5, up = camera.aspect < 1 ? 4 : 3;
+  camPos.set(me.x - Math.sin(camYaw) * back, me.y + up - Math.sin(me.pitch) * 4, me.z - Math.cos(camYaw) * back);
+  if (me.z < FINISH_Z - 2) { camPos.x = clamp(camPos.x, -HW + 2, HW - 2); camPos.y = clamp(camPos.y, 2, CONFIG.hallH - 2); }
+  camera.position.lerp(camPos, 1 - Math.pow(me.cr ? 0.3 : 0.0005, dt));
+  me.shake = Math.max(0, me.shake - dt * 2);
+  if (me.shake) camera.position.add(shakeV.set(Math.random() - 0.5, Math.random() - 0.5, Math.random() - 0.5).multiplyScalar(me.shake * 0.8));
+  const d = dirOf(me.yaw, me.pitch * 0.5); camLook.set(me.x + d.x * 8, me.y + d.y * 8 + 0.8, me.z + d.z * 8); // half the pitch: never stare straight down
+  const bank = me.roll * 0.25; camera.up.set(Math.cos(camYaw) * Math.sin(bank), Math.cos(bank), -Math.sin(camYaw) * Math.sin(bank)); // lean with the plane a little
+  camera.lookAt(camLook);
+  const fov = (camera.aspect < 1 ? 82 : 70) + clamp((me.sp - CONFIG.launch) / 30, 0, 1) * 10;
+  camera.fov += (fov - camera.fov) * Math.min(1, dt * 3); camera.updateProjectionMatrix();
+  renderer.render(scene, camera);
+  if (r && now - lastHud > 100) { lastHud = now; hud(r, now); }
+}
+
+(async function start() {
+  net = await connect();
+  net.onState((st) => { S = st; });
+  net.on("again", () => again());
+  net.onDisconnect(() => { dropped = true; $("net").textContent = "Reconnecting…"; });
+  net.onReconnect(() => { dropped = false; });
+  if (!net.offline && typeof MP !== "undefined") board = MP.auth({ key: MP_CONNECT.key, apiUrl: MP_CONNECT.apiUrl }).leaderboard(CONFIG.board);
+  const taken = new Set([...Object.entries(S.entities.players || {}).filter(([id]) => id !== net.sessionId).map(([, p]) => p.c), ...shared("bots", []).map((b) => b.c)]);
+  myColor = COLORS.find((c) => !taken.has(c)) || COLORS[Math.floor(Math.random() * COLORS.length)];
+  net.me.set({ n: myName, c: myColor, hb: Date.now() });
+  if (ATTRACT) Object.assign(CONFIG, { countdown: 1500, resultsFor: 1500, seats: 6 });
+  started = performance.now();
+  if (new URLSearchParams(location.search).has("test")) window.__test = { race, botList, me, racers, WALLS, RINGS, FURNITURE }; // for test scripts only
+  requestAnimationFrame(frame);
+})();
+</script>
+</body>
+</html>

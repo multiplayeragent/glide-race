@@ -1,0 +1,21 @@
+{
+  "name": "Glide Race",
+  "genre": "racing",
+  "dim": "3D",
+  "mode": "Versus",
+  "players": "2–8",
+  "hook": "Paper planes race down a giant house.",
+  "how": "Launch off a bookshelf and glide room to room through the doorways. You sink all the time: dive for speed, ride the warm air up from the floor vents, and fly through the gold rings for a boost. Crash into the furniture and you start again from the last doorway; first out of the window wins.",
+  "controls": "Left/Right to turn, Up to climb, Down to dive (or WASD), or on-screen buttons",
+  "uses": [
+    ["Leaderboard", "The fastest flights through the house."],
+    ["Host-run rounds", "The host's browser starts each race and posts the results; if it leaves, the next player takes over."],
+    ["Bots", "Bots fly the rings, and now and then clip a doorway, until enough people join."],
+    ["Live sync", "Every paper plane glides through the same house for everyone at once."]
+  ],
+  "ideas": [
+    "Add a ceiling fan that blows planes sideways",
+    "Make it a canyon with rock arches instead of a house",
+    "Add a paper airplane skin picker"
+  ]
+}
