@@ -117,8 +117,10 @@ const CONFIG = {
   crashFor: 1400,         // ms you tumble before you're back at the last doorway
   countdown: 5000,        // ms on the shelf before GO
   afterFirst: 25000,      // ms the race stays open after the first finisher
+  botsAfterLast: 6000,    // ...or this long after the last person finishes, so bots close behind still get a time
   resultsFor: 12000,      // ms the results show before the next race
   botSkill: [0.72, 0.95], // bots' aim
+  botLookAhead: 12,       // bots turn for the next ring or doorway this far before the one they are flying through, so they line up in time
   board: "best-flight",
 };
 const BOT_NAMES = ["Origami", "Crease", "Fold", "Swoop", "Doodle", "Dart", "Paperclip"];
@@ -380,9 +382,11 @@ function nameTag(name) {
 function makePlane(color, name) {
   const g = new THREE.Group(), body = new THREE.Mesh(planeGeo(color), new THREE.MeshStandardMaterial({ vertexColors: true, side: THREE.DoubleSide, roughness: 0.9, flatShading: true }));
   body.scale.setScalar(1.2); g.add(body);
-  if (name) g.add(nameTag(name));
-  g.userData = { body }; scene.add(g); return g;
+  const tag = name ? nameTag(name) : null; if (tag) g.add(tag);
+  g.userData = { body, tag }; scene.add(g); return g;
 }
+/** Someone else's plane right at the camera would fill the screen, and its name tag even more: hide what is too close. */
+function hideNearCamera(g) { const d = camera.position.distanceToSquared(g.position); g.visible = d > 9; if (g.userData.tag) g.userData.tag.visible = d > 49; }
 /** Draw a plane at its spot, pointing along yaw/pitch, banked by roll; crashed planes tumble. */
 function placePlane(g, x, y, z, yaw, pitch, roll, crashedFor) {
   g.position.set(x, y, z); g.rotation.set(-pitch, yaw, -roll, "YXZ");
@@ -475,7 +479,8 @@ function hostTick(dt, now) {
     const all = racers(), done = all.filter((x) => x.ft);
     const humansDone = all.filter((x) => !x.bot && (!ATTRACT || !x.mine)).every((x) => x.ft);
     if (done.length && !r.endsAt) r = writeRace({ ...r, endsAt: t + CONFIG.afterFirst });
-    if ((done.length && humansDone && humans.length) || (r.endsAt && t > r.endsAt) || t - r.startAt > 300000 || (ATTRACT && done.length >= 3)) {
+    if (done.length && humansDone && humans.length && r.endsAt > t + CONFIG.botsAfterLast) r = writeRace({ ...r, endsAt: t + CONFIG.botsAfterLast }); // everyone's out: the bots still flying get a few seconds to finish
+    if (done.length === all.length || (r.endsAt && t > r.endsAt) || t - r.startAt > 300000 || (ATTRACT && done.length >= 3)) {
       r = writeRace({ ...r, phase: "done", endsAt: t + CONFIG.resultsFor, results: all.map((x) => ({ id: x.id, n: x.mine ? myName : x.name, ft: x.ft || 0, rg: x.rg || 0 })) });
     }
   }
@@ -513,7 +518,7 @@ function flyOne(c, r, t, dt, steer, say) {
 }
 /** A bot (or the ?attract autopilot) flies at the next ring or doorway, a little off-centre. */
 function botFly(b) {
-  const ti = TARGETS.findIndex((g) => g.z > b.z + 3), tg = TARGETS[ti < 0 ? TARGETS.length - 1 : ti];
+  const ti = TARGETS.findIndex((g) => g.z > b.z + CONFIG.botLookAhead), tg = TARGETS[ti < 0 ? TARGETS.length - 1 : ti];
   if (b.aimFor !== ti) { b.aimFor = ti; const miss = (1 - (b.skill || 0.85)) * (tg.door !== undefined ? 7 : 12); b.aimX = (Math.random() - 0.5) * 2 * miss; b.aimY = (Math.random() - 0.5) * 2 * miss; }
   const dx = tg.x + b.aimX - b.x, dy = tg.y + b.aimY - b.y, dz = Math.max(4, tg.z - b.z);
   const yawErr = angle(Math.atan2(dx, dz) - b.yaw), wantPitch = clamp(Math.atan2(dy, Math.hypot(dx, dz)), -0.7, 0.4);
@@ -583,6 +588,7 @@ function hud(r, now) {
   $("net").textContent = net.offline ? "Offline: playing with bots" : dropped ? "Reconnecting…" : `Online · ${n} player${n === 1 ? "" : "s"}${isHost() ? " · you run the race" : ""}`;
   $("over").hidden = r.phase !== "done";
   if (r.phase === "done") {
+    $("msg").classList.remove("on"); // a finish toast would sit on top of the results card
     const win = r.results[0];
     $("otitle").textContent = win && win.ft ? (win.id === net.sessionId ? "You win!" : `${win.n} wins!`) : "Results";
     $("results").innerHTML = r.results.map((x) => `<li class="${x.id === net.sessionId ? "me" : ""}">${esc(x.n)}<em>${x.rg} ring${x.rg === 1 ? "" : "s"}</em><span>${x.ft ? fmt(x.ft) : "DNF"}</span></li>`).join("");
@@ -608,9 +614,13 @@ const touchUI = matchMedia("(pointer: coarse)").matches && !ATTRACT;
 $("padL").hidden = $("padR").hidden = !touchUI;
 document.body.classList.toggle("touch", touchUI);
 const wakeAudio = () => { if (!actx) { try { actx = new (window.AudioContext || window.webkitAudioContext)(); } catch {} } };
-const KEYS = { ArrowLeft: "left", a: "left", A: "left", ArrowRight: "right", d: "right", D: "right", ArrowUp: "climb", w: "climb", W: "climb", ArrowDown: "dive", s: "dive", S: "dive" };
-addEventListener("keydown", (e) => { wakeAudio(); const k = KEYS[e.key]; if (k) { e.preventDefault(); input[k] = true; } });
-addEventListener("keyup", (e) => { const k = KEYS[e.key]; if (k) input[k] = false; });
+// Keys by where they sit on the keyboard (e.code), so they still work with Shift or Caps Lock held.
+const KEYS = { ArrowLeft: "left", KeyA: "left", ArrowRight: "right", KeyD: "right", ArrowUp: "climb", KeyW: "climb", ArrowDown: "dive", KeyS: "dive" };
+const held = new Set(); // the keys that are down right now: letting go of A while Left is still held keeps turning
+addEventListener("keydown", (e) => { wakeAudio(); const k = KEYS[e.code]; if (k) { e.preventDefault(); held.add(e.code); input[k] = true; } });
+addEventListener("keyup", (e) => { const k = KEYS[e.code]; held.delete(e.code); if (k) input[k] = [...held].some((c) => KEYS[c] === k); });
+// The tab lost focus: the keyups never arrive, so let go of everything.
+addEventListener("blur", () => { held.clear(); for (const k in input) input[k] = false; for (const b of document.querySelectorAll(".pad button")) b.classList.remove("on"); });
 for (const b of document.querySelectorAll(".pad button")) {
   const k = b.dataset.k, on = (v) => { input[k] = v; b.classList.toggle("on", v); };
   b.addEventListener("pointerdown", (e) => { e.preventDefault(); wakeAudio(); b.setPointerCapture(e.pointerId); on(true); });
@@ -661,13 +671,13 @@ function frame(now) {
     if (id === net.sessionId || !live.has(id)) continue;
     const k = parse(p.k, null); if (!k || !r || k.r !== r.id) continue;
     seen.add(id); const v = viewOf(id, p.c || "#ccc", p.n || "Player"); follow(v, k, dt, now); v.cr = k.cr;
-    placePlane(v.g, v.x, v.y, v.z, v.yaw, v.pitch, v.roll, k.cr ? (k.cr - t) / 1000 : 0); trail(v, p.c || "#ccc", now);
+    placePlane(v.g, v.x, v.y, v.z, v.yaw, v.pitch, v.roll, k.cr ? (k.cr - t) / 1000 : 0); hideNearCamera(v.g); trail(v, p.c || "#ccc", now);
   }
   const hostBots = isHost();
   for (const b of botList()) {
     seen.add(b.i); const v = viewOf(b.i, b.c, b.n);
     if (hostBots) { const hb = host.bots.get(b.i); Object.assign(v, { x: hb.x, y: hb.y, z: hb.z, yaw: hb.yaw, pitch: hb.pitch, roll: hb.roll, cr: hb.cr }); } else { follow(v, b, dt, now); v.cr = b.cr; }
-    placePlane(v.g, v.x, v.y, v.z, v.yaw, v.pitch, v.roll, b.cr ? (b.cr - t) / 1000 : 0); trail(v, b.c, now);
+    placePlane(v.g, v.x, v.y, v.z, v.yaw, v.pitch, v.roll, b.cr ? (b.cr - t) / 1000 : 0); hideNearCamera(v.g); trail(v, b.c, now);
   }
   for (const [id, v] of views) if (!seen.has(id)) { scene.remove(v.g); views.delete(id); }
   if (!me.g) me.g = makePlane(myColor, "");
